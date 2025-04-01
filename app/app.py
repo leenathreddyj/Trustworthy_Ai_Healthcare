@@ -5,14 +5,21 @@ from sklearn.linear_model import LogisticRegression
 from sklearn.preprocessing import StandardScaler
 import shap
 import matplotlib
-matplotlib.use('Agg')  # Use non-GUI backend to avoid macOS crash
+matplotlib.use('Agg')
 import matplotlib.pyplot as plt
 import csv
 import datetime
+import os
+import requests
+import base64
+import time
+from fpdf import FPDF
 
 app = Flask(__name__)
 
-# Define columns expected by the model (in same order)
+SENDGRID_API_KEY = os.getenv("SENDGRID_API_KEY")
+SENDER_EMAIL = "leenathreddy@gmail.com"
+
 feature_columns = [
     'age', 'sex', 'trestbps', 'chol', 'fbs', 'thalach', 'exang', 'oldpeak', 'ca',
     'cp_asymptomatic', 'cp_atypical angina', 'cp_non-anginal', 'cp_typical angina',
@@ -21,7 +28,6 @@ feature_columns = [
     'thal_fixed defect', 'thal_normal', 'thal_reversable defect'
 ]
 
-# Load both baseline and fair models
 def load_models():
     df = pd.read_csv('data/heart_disease_uci.csv')
     df.drop(['id', 'dataset'], axis=1, inplace=True)
@@ -43,11 +49,6 @@ def load_models():
     scaler = StandardScaler()
     X_scaled = scaler.fit_transform(X)
 
-    # Baseline model
-    model_baseline = LogisticRegression(max_iter=1000)
-    model_baseline.fit(X_scaled, y)
-
-    # Fair model (reweighted)
     from aif360.datasets import BinaryLabelDataset
     from aif360.algorithms.preprocessing import Reweighing
 
@@ -67,6 +68,9 @@ def load_models():
     rw.fit(bld_train)
     bld_rw = rw.transform(bld_train)
 
+    model_baseline = LogisticRegression(max_iter=1000)
+    model_baseline.fit(X_scaled, y)
+
     model_fair = LogisticRegression(max_iter=1000)
     model_fair.fit(X_scaled, y, sample_weight=bld_rw.instance_weights)
 
@@ -79,11 +83,11 @@ def index():
     biased_prediction = None
     fair_prediction = None
     changed = False
-    bias_prob = 0.0
-    fair_prob = 0.0
+    email = None
 
     if request.method == 'POST':
         form = request.form
+        email = form.get('email')
 
         input_data = {
             'age': float(form['age']),
@@ -122,27 +126,96 @@ def index():
         fair_prediction = f"{'High' if result_fair else 'Low'} Risk of Heart Disease ({prob_fair:.2f})"
         changed = result_biased != result_fair
 
-        # Log to CSV
         timestamp = datetime.datetime.now().isoformat()
-        log_data = {
-            "timestamp": timestamp,
-            "input": input_data,
-            "biased_prediction": biased_prediction,
-            "fair_prediction": fair_prediction,
-            "changed": changed
-        }
-        with open("app/static/predictions_log.csv", mode="a", newline="") as file:
+        csv_path = "app/static/predictions_log.csv"
+        with open(csv_path, mode="a", newline="") as file:
             writer = csv.writer(file)
             writer.writerow([timestamp] + list(input_data.values()) + [biased_prediction, fair_prediction, changed])
 
-        # SHAP explanation (summary plot for this input)
         explainer = shap.LinearExplainer(model_fair, input_scaled)
         shap_values = explainer.shap_values(input_scaled)
 
         plt.clf()
         shap.summary_plot(shap_values, features=input_df, feature_names=feature_columns, show=False)
         plt.tight_layout()
-        plt.savefig("app/static/shap_force.png")
+        shap_path = "app/static/shap_force.png"
+        plt.savefig(shap_path)
+
+        pdf_path = "app/static/prediction_report.pdf"
+        pdf = FPDF()
+        pdf.add_page()
+        pdf.set_font("Arial", size=12)
+        pdf.cell(200, 10, txt="Heart Disease Prediction Report", ln=True, align='C')
+        pdf.ln(10)
+        pdf.cell(200, 10, txt=f"Timestamp: {timestamp}", ln=True)
+        pdf.cell(200, 10, txt=f"Biased Prediction: {biased_prediction}", ln=True)
+        pdf.cell(200, 10, txt=f"Fair Prediction: {fair_prediction}", ln=True)
+        pdf.cell(200, 10, txt=f"Prediction Changed: {changed}", ln=True)
+        pdf.output(pdf_path)
+
+        if email and SENDGRID_API_KEY:
+            with open(shap_path, 'rb') as f:
+                image_data = f.read()
+            with open(pdf_path, 'rb') as f:
+                pdf_data = f.read()
+            with open(csv_path, 'rb') as f:
+                csv_data = f.read()
+
+            encoded_img = base64.b64encode(image_data).decode('utf-8')
+            encoded_pdf = base64.b64encode(pdf_data).decode('utf-8')
+            encoded_csv = base64.b64encode(csv_data).decode('utf-8')
+
+            data = {
+                "personalizations": [
+                    {
+                        "to": [{"email": email}],
+                        "subject": "Your Heart Disease Prediction Report"
+                    }
+                ],
+                "from": {
+                    "email": SENDER_EMAIL,
+                    "name": "Heart Disease Predictor"
+                },
+                "reply_to": {
+                    "email": SENDER_EMAIL
+                },
+                "content": [
+                    {
+                        "type": "text/plain",
+                        "value": f"""
+Biased Prediction: {biased_prediction}
+Fair Prediction: {fair_prediction}
+Prediction Changed: {changed}
+
+Attached are your PDF report, SHAP explanation, and prediction log.
+                        """
+                    }
+                ],
+                "attachments": [
+                    {
+                        "content": encoded_img,
+                        "type": "image/png",
+                        "filename": "shap_force.png"
+                    },
+                    {
+                        "content": encoded_pdf,
+                        "type": "application/pdf",
+                        "filename": "prediction_report.pdf"
+                    },
+                    {
+                        "content": encoded_csv,
+                        "type": "text/csv",
+                        "filename": "predictions_log.csv"
+                    }
+                ]
+            }
+            headers = {
+                "Authorization": f"Bearer {SENDGRID_API_KEY}",
+                "Content-Type": "application/json"
+            }
+            time.sleep(2)
+            response = requests.post("https://api.sendgrid.com/v3/mail/send", json=data, headers=headers)
+            print("SendGrid response:", response.status_code, response.text)
 
     return render_template("index.html", biased_prediction=biased_prediction, fair_prediction=fair_prediction, changed=changed)
 
