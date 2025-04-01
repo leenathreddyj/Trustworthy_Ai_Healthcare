@@ -1,0 +1,123 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Heart Disease Risk Predictor</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            max-width: 700px;
+            margin: auto;
+            padding: 30px;
+            background-color: #f9f9f9;
+        }
+        input, select {
+            margin: 5px 0;
+            padding: 8px;
+            width: 100%;
+        }
+        button {
+            padding: 10px 20px;
+            margin-top: 10px;
+            background-color: #2e8b57;
+            color: white;
+            border: none;
+            cursor: pointer;
+        }
+        button:hover {
+            background-color: #256c47;
+        }
+        .result {
+            margin-top: 20px;
+            font-size: 1.2em;
+            font-weight: bold;
+            color: #333;
+        }
+        .download {
+            margin-top: 15px;
+        }
+    </style>
+</head>
+<body>
+
+    <h1>Heart Disease Risk Predictor</h1>
+
+    <form method="POST">
+        <label>Age:</label>
+        <input type="number" name="age" required>
+
+        <label>Sex:</label>
+        <select name="sex"><option>Male</option><option>Female</option></select>
+
+        <label>Resting BP:</label>
+        <input type="number" name="trestbps" required>
+
+        <label>Cholesterol:</label>
+        <input type="number" name="chol" required>
+
+        <label>Fasting Blood Sugar (1 or 0):</label>
+        <input type="number" name="fbs" required>
+
+        <label>Max Heart Rate:</label>
+        <input type="number" name="thalach" required>
+
+        <label>Exercise Induced Angina (1 or 0):</label>
+        <input type="number" name="exang" required>
+
+        <label>Oldpeak:</label>
+        <input type="number" name="oldpeak" step="0.1" required>
+
+        <label>Number of vessels (ca):</label>
+        <input type="number" name="ca" required>
+
+        <label>Chest Pain Type:</label>
+        <select name="cp">
+            <option value="asymptomatic">asymptomatic</option>
+            <option value="atypical angina">atypical angina</option>
+            <option value="non-anginal">non-anginal</option>
+            <option value="typical angina">typical angina</option>
+        </select>
+
+        <label>Rest ECG:</label>
+        <select name="restecg">
+            <option value="normal">normal</option>
+            <option value="ST-T wave abnormality">ST-T wave abnormality</option>
+            <option value="left ventricular hypertrophy">left ventricular hypertrophy</option>
+        </select>
+
+        <label>Slope:</label>
+        <select name="slope">
+            <option value="upsloping">upsloping</option>
+            <option value="flat">flat</option>
+            <option value="downsloping">downsloping</option>
+        </select>
+
+        <label>Thal:</label>
+        <select name="thal">
+            <option value="normal">normal</option>
+            <option value="fixed defect">fixed defect</option>
+            <option value="reversable defect">reversable defect</option>
+        </select>
+
+        <button type="submit">Predict</button>
+    </form>
+
+    {% if biased_prediction %}
+        <div class="result">
+            <p><strong>Biased Prediction:</strong> {{ biased_prediction }}</p>
+            <p><strong>Fair Prediction:</strong> {{ fair_prediction }}</p>
+            {% if changed %}
+                <p style="color: red;"><strong>⚠️ Prediction changed after fairness adjustment!</strong></p>
+            {% endif %}
+        </div>
+
+        <h3>Why? (SHAP Explanation for Fair Model)</h3>
+        <img src="{{ url_for('static', filename='shap_force.png') }}" width="100%">
+
+        <div class="download">
+            <a href="/static/predictions_log.csv" download>📥 Download Prediction Log</a>
+        </div>
+    {% endif %}
+
+</body>
+</html>
